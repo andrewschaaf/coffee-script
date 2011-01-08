@@ -36,14 +36,27 @@ exports.Base = class Base
   # already been asked to return the result (because statements know how to
   # return results).
   compile: (o, lvl) ->
-    o        = extend {}, o
-    o.level  = lvl if lvl
-    node     = @unfoldSoak(o) or this
-    node.tab = o.indent
-    if o.level is LEVEL_TOP or not node.isStatement(o)
-      node.compileNode o
+    if @compile_bar?
+      strings = []
+      processBarArray o, strings, @compile_bar(o, lvl)
+      strings.join ''
     else
-      node.compileClosure o
+      o        = extend {}, o
+      o.level  = lvl if lvl
+      node     = @unfoldSoak(o) or this
+      node.tab = o.indent
+      if o.level is LEVEL_TOP or not node.isStatement(o)
+        node.compileNode o
+      else
+        node.compileClosure o
+
+  compileNode: (o, lvl) ->
+    if @compileNode_bar?
+      strings = []
+      processBarArray o, strings, @compileNode_bar(o, lvl)
+      strings.join ''
+    else
+      throw new Error "Expected #{@constructor.name} to have compileNode or compileNode_bar"
 
   # Statements converted into expressions via closure-wrapping share a scope
   # object with their parent closure, to preserve the expected lexical scope.
@@ -288,9 +301,9 @@ exports.Literal = class Literal extends Base
     return no unless @isStatement()
     if not (o and (o.loop or o.block and (@value isnt 'continue'))) then this else no
 
-  compileNode: (o) ->
-    code = if @value.reserved then "\"#{@value}\"" else @value
-    if @isStatement() then "#{@tab}#{code};" else code
+  compileNode_bar: (o) ->
+    code = if @value.reserved then "\"#{@value}\"" else '' + @value
+    if @isStatement() then ["#{@tab}#{code};"] else [code]
 
   toString: ->
     ' "' + @value + '"'
@@ -312,8 +325,11 @@ exports.Return = class Return extends Base
     expr = @expression?.makeReturn()
     if expr and expr not instanceof Return then expr.compile o, level else super o, level
 
-  compileNode: (o) ->
-    @tab + "return#{ if @expression then ' ' + @expression.compile(o, LEVEL_PAREN) else '' };"
+  compileNode_bar: (o) ->
+    if @expression
+      ["#{@tab}return ", PAREN(@expression), ";"]
+    else
+      ["#{@tab}return;"]
 
 #### Value
 
@@ -388,13 +404,13 @@ exports.Value = class Value extends Base
   # Things get much more interesting if the chain of properties has *soak*
   # operators `?.` interspersed. Then we have to take care not to accidentally
   # evaluate anything twice when building the soak chain.
-  compileNode: (o) ->
+  compileNode_bar: (o) ->
     @base.front = @front
     props = @properties
-    code  = @base.compile o, if props.length then LEVEL_ACCESS else null
-    code  = "(#{code})" if props[0] instanceof Access and @isSimpleNumber()
-    code += prop.compile o for prop in props
-    code
+    arr = if props.length then [ACCESS(@base)] else [@base]
+    arr = ['(', arr, ')'] if props[0] instanceof Access and @isSimpleNumber()
+    arr.push prop for prop in props
+    arr
 
   # Unfold a soak into an `If`: `a?.b` -> `a.b if a?`
   unfoldSoak: (o) ->
@@ -422,10 +438,10 @@ exports.Comment = class Comment extends Base
   isStatement:     YES
   makeReturn:      THIS
 
-  compileNode: (o, level) ->
+  compileNode_bar: (o, level) ->
     code = '/*' + multident(@comment, @tab) + '*/'
     code = o.indent + code if (level or o.level) is LEVEL_TOP
-    code
+    [code]
 
 #### Call
 
@@ -577,8 +593,8 @@ exports.Index = class Index extends Base
 
   children: ['index']
 
-  compile: (o) ->
-    (if @proto then '.prototype' else '') + "[#{ @index.compile o, LEVEL_PAREN }]"
+  compile_bar: (o) ->
+    [(if @proto then '.prototype' else '') + "[", PAREN(@index), "]"]
 
   isComplex: ->
     @index.isComplex()
@@ -1360,8 +1376,8 @@ exports.Throw = class Throw extends Base
   # A **Throw** is already a return, of sorts...
   makeReturn: THIS
 
-  compileNode: (o) ->
-    @tab + "throw #{ @expression.compile o };"
+  compileNode_bar: (o) ->
+    [@tab + 'throw ', @expression, ';']
 
 #### Existence
 
@@ -1403,15 +1419,15 @@ exports.Parens = class Parens extends Base
   isComplex : -> @body.isComplex()
   makeReturn: -> @body.makeReturn()
 
-  compileNode: (o) ->
+  compileNode_bar: (o) ->
     expr = @body.unwrap()
     if expr instanceof Value and expr.isAtomic()
       expr.front = @front
-      return expr.compile o
-    code = expr.compile o, LEVEL_PAREN
+      return [expr]
+    arr = [PAREN(expr)]
     bare = o.level < LEVEL_OP and (expr instanceof Op or expr instanceof Call or
       (expr instanceof For and expr.returns))
-    if bare then code else "(#{code})"
+    if bare then arr else ['(', arr, ')']
 
 #### For
 
@@ -1727,6 +1743,26 @@ LEVEL_LIST   = 3  # [...]
 LEVEL_COND   = 4  # ... ? x : y
 LEVEL_OP     = 5  # !...
 LEVEL_ACCESS = 6  # ...[0]
+
+TOP    = (node) -> {node: node, level: level: LEVEL_TOP}
+PAREN  = (node) -> {node: node, level: level: LEVEL_PAREN}
+LIST   = (node) -> {node: node, level: level: LEVEL_LIST}
+COND   = (node) -> {node: node, level: level: LEVEL_COND}
+OP     = (node) -> {node: node, level: level: LEVEL_OP}
+ACCESS = (node) -> {node: node, level: level: LEVEL_ACCESS}
+
+processBarArray = (o, strings, arr) ->
+  for x in arr
+    if x instanceof Array
+      processBarArray o, strings, x
+    else if (typeof x) == 'string'
+      strings.push x
+    else if x instanceof Base
+      strings.push x.compile o
+    else if x.level?
+      strings.push x.node.compile o, x.level
+    else
+      throw new Error "Invalid BAR element: #{x}"
 
 # Tabs are two spaces for pretty printing.
 TAB = '  '
