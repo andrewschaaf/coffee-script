@@ -1405,17 +1405,16 @@ exports.Existence = class Existence extends Base
 
   invert: NEGATE
 
-  compileNode: (o) ->
+  compileNode_bar: (o) ->
     code = @expression.compile o, LEVEL_OP
-    code = if IDENTIFIER.test(code) and not o.scope.check code
+    arr = if IDENTIFIER.test(code) and not o.scope.check code
       if @negated
-        "typeof #{code} == \"undefined\" || #{code} === null"
+        ['typeof ', OP(@expression), ' == "undefined" || ', OP(@expression), ' === null']
       else
-        "typeof #{code} != \"undefined\" && #{code} !== null"
+        ['typeof ', OP(@expression), ' != "undefined" && ', OP(@expression), ' !== null']
     else
-      sym = if @negated then '==' else '!='
-      "#{code} #{sym} null"
-    if o.level <= LEVEL_COND then code else "(#{code})"
+      [OP(@expression), (if @negated then ' == null' else ' != null')]
+    if o.level <= LEVEL_COND then arr else ['(', arr, ')']
 
 #### Parens
 
