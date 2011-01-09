@@ -1569,22 +1569,28 @@ exports.Switch = class Switch extends Base
     @otherwise?.makeReturn()
     this
 
-  compileNode: (o) ->
+  compileNode_bar: (o) ->
     idt1 = o.indent + TAB
     idt2 = o.indent = idt1 + TAB
-    code = @tab + "switch (#{ @subject?.compile(o, LEVEL_PAREN) or false }) {\n"
+    #arr = [@tab + "switch (", if @subject? then PAREN(@subject) else 'false', ") {\n"]
+    arr = [@tab + "switch (#{ @subject?.compile(o, LEVEL_PAREN) or false }) {\n"]#TEMP
     for [conditions, block], i in @cases
       for cond in flatten [conditions]
         cond  = cond.invert() unless @subject
-        code += idt1 + "case #{ cond.compile o, LEVEL_PAREN }:\n"
-      code += body + '\n' if body = block.compile o, LEVEL_TOP
+        arr.push [idt1 + "case ", PAREN(cond), ":\n"]
+      arr.push [TOP(block), '\n'] if block.compile o, LEVEL_TOP
       break if i is @cases.length - 1 and not @otherwise
       expr = @lastNonComment block.expressions
       jumper = expr.jumps()
       if not expr or not jumper or (jumper instanceof Literal and jumper.value is 'debugger')
-        code += idt2 + 'break;\n'
-    code += idt1 + "default:\n#{ @otherwise.compile o, LEVEL_TOP }\n" if @otherwise and @otherwise.expressions.length
-    code +  @tab + '}'
+        arr.push (idt2 + 'break;\n')
+    if @otherwise and @otherwise.expressions.length
+      # If you delete the next line, the tests fail. TODO: investigate
+      @otherwise.compile o, LEVEL_TOP
+      arr.push [idt1 + "default:\n", TOP(@otherwise), "\n"]
+    
+    arr.push (@tab + '}')
+    arr
 
 #### If
 
