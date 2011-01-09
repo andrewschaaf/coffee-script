@@ -513,16 +513,23 @@ exports.Call = class Call extends Base
       ifn = unfoldSoak o, call, 'variable'
     ifn
 
-  # Compile a vanilla function call.
-  compileNode: (o) ->
+  compileNode_bar: (o) ->
     @variable?.front = @front
+    #BAR: compileSplattedArray_bar
     if code = Splat.compileSplattedArray o, @args, true
-      return @compileSplat o, code
-    args = (arg.compile o, LEVEL_LIST for arg in @args).join ', '
+      return @compileSplat_bar o, code
+    
+    args = []
+    for arg, i in @args
+      code = arg.compile o, LEVEL_LIST
+      args.push ', ' if i > 0
+      args.push code#BAR
     if @isSuper
-      @superReference(o) + ".call(this#{ args and ', ' + args })"
+      #BAR superReference
+      [@superReference(o), ".call(this", (if @args.length then [', ', args] else ''), ")"]
     else
-      (if @isNew then 'new ' else '') + @variable.compile(o, LEVEL_ACCESS) + "(#{args})"
+      @variable.compile(o, LEVEL_ACCESS)
+      [(if @isNew then 'new ' else ''), @variable, "(", args, ")"]
 
   # `super()` is converted into a call against the superclass's implementation
   # of the current function.
@@ -533,29 +540,33 @@ exports.Call = class Call extends Base
   # `.apply()` call to allow an array of arguments to be passed.
   # If it's a constructor, then things get real tricky. We have to inject an
   # inner constructor in order to be able to pass the varargs.
-  compileSplat: (o, splatArgs) ->
-    return "#{ @superReference o }.apply(this, #{splatArgs})" if @isSuper
+  compileSplat_bar: (o, splatArgs) ->
+    if @isSuper
+      return ["#{ @superReference o }.apply(this, ", splatArgs, ")"]#BAR?
     if @isNew
       idt = @tab + TAB
-      return """
-		(function(func, args, ctor) {
-		#{idt}ctor.prototype = func.prototype;
-		#{idt}var child = new ctor, result = func.apply(child, args);
-		#{idt}return typeof result == "object" ? result : child;
-		#{@tab}})(#{ @variable.compile o, LEVEL_LIST }, #{splatArgs}, function() {})
-      """
+      return [
+        """
+        (function(func, args, ctor) {
+        #{idt}ctor.prototype = func.prototype;
+        #{idt}var child = new ctor, result = func.apply(child, args);
+        #{idt}return typeof result == "object" ? result : child;
+        """
+        "#{@tab}})(", LIST(@variable), ", ", splatArgs, ", function() {})"
+      ]
     base = new Value @variable
     if (name = base.properties.pop()) and base.isComplex()
       ref = o.scope.freeVariable 'ref'
-      fun = "(#{ref} = #{ base.compile o, LEVEL_LIST })#{ name.compile o }"
+      fun = ["(", ref, " = ", LIST(base), ")", name]
     else
-      fun = base.compile o, LEVEL_ACCESS
+      funCode = base.compile o, LEVEL_ACCESS
+      fun = [funCode]#BAR
       if name
-        ref = fun
-        fun += name.compile o
+        ref = funCode
+        fun.push name
       else
         ref = 'null'
-    "#{fun}.apply(#{ref}, #{splatArgs})"
+    [fun, ".apply(", ref, ", ", splatArgs, ")"]
 
 #### Extends
 
@@ -1150,6 +1161,31 @@ exports.Splat = class Splat extends Base
     return args[0] + ".concat(#{ args.slice(1).join ', ' })" if index is 0
     base = (node.compile o, LEVEL_LIST for node in list.slice 0, index)
     "[#{ base.join ', ' }].concat(#{ args.join ', ' })"
+
+  @compileSplattedArray_bar: (o, list, apply) ->
+    index = -1
+    continue while (node = list[++index]) and node not instanceof Splat
+    return [] if index >= list.length
+    if list.length is 1
+      first = list[0]
+      return [LIST(first)] if apply
+      return [utility 'slice', ".call(", LIST(first), ")"]
+    args = list.slice index
+    for node, i in args
+      args[i] = if node instanceof Splat
+      then [utility 'slice', ".call(", LIST(node), ")"]
+      else ["[", LIST(node), "]"]
+    if index is 0
+      argsBar = []
+      for arg, i in args[1..]
+        argsBar.push ', ' if i > 0
+        argsBar.push arg
+      return [args[0], ".concat(", argsBar, ")"]
+    base = []
+    for node, i in list.slice 0, index
+      base.push ', ' if i > 0
+      base.push LIST(node)
+    ["[", base, "].concat(", args.join(', '), ")"]
 
 #### While
 
