@@ -1628,8 +1628,8 @@ exports.If = class If extends Base
 
   jumps: (o) -> @body.jumps(o) or @elseBody?.jumps(o)
 
-  compileNode: (o) ->
-    if @isStatement o then @compileStatement o else @compileExpression o
+  compileNode_bar: (o) ->
+    if @isStatement o then @compileStatement_bar o else @compileExpression_bar o
 
   makeReturn: ->
     @body     and= new Expressions [@body.makeReturn()]
@@ -1641,29 +1641,45 @@ exports.If = class If extends Base
 
   # Compile the **If** as a regular *if-else* statement. Flattened chains
   # force inner *else* bodies into statement form.
-  compileStatement: (o) ->
+  compileStatement_bar: (o) ->
     child    = del o, 'chainChild'
-    cond     = @condition.compile o, LEVEL_PAREN
+    @condition.compile o, LEVEL_PAREN
+    cond     = @condition
     o.indent += TAB
-    body     = @ensureExpressions(@body).compile o
-    body     = "\n#{body}\n#{@tab}" if body
-    ifPart   = "if (#{cond}) {#{body}}"
-    ifPart   = @tab + ifPart unless child
-    return ifPart unless @elseBody
-    ifPart + ' else ' + if @isChain
+    bodyNode = @ensureExpressions(@body)
+    bodyCode = bodyNode.compile o
+    body = if bodyCode
+      ["\n", bodyNode, "\n#{@tab}"]
+    else
+      bodyNode
+    ifPart = ["#{if child then "" else @tab}if (", cond, ") {", body, "}"]
+    return [ifPart] unless @elseBody
+    [ifPart, ' else ', if @isChain
       o.indent = @tab
       o.chainChild = yes
-      @elseBody.unwrap().compile o, LEVEL_TOP
+      unwrapped = @elseBody.unwrap()
+      unwrapped.compile o, LEVEL_TOP
+      unwrapped
     else
-      "{\n#{ @elseBody.compile o, LEVEL_TOP }\n#{@tab}}"
+      @elseBody.compile o, LEVEL_TOP
+      ["{\n", @elseBody, "\n#{@tab}}"]]
 
   # Compile the If as a conditional operator.
-  compileExpression: (o) ->
-    cond = @condition.compile o, LEVEL_COND
-    body = @bodyNode().compile o, LEVEL_LIST
-    alt  = if @elseBodyNode() then @elseBodyNode().compile(o, LEVEL_LIST) else 'void 0'
-    code = "#{cond} ? #{body} : #{alt}"
-    if o.level >= LEVEL_COND then "(#{code})" else code
+  compileExpression_bar: (o) ->
+    
+    @condition.compile o, LEVEL_COND
+    
+    bodyNode = @bodyNode()
+    bodyNode.compile o, LEVEL_LIST
+    
+    elseBodyNode = @elseBodyNode()
+    if elseBodyNode
+      elseBodyNode.compile o, LEVEL_LIST
+    else
+      elseBodyNode = 'void 0'
+    
+    arr = [@condition, " ? ", bodyNode, " : ", elseBodyNode]
+    if o.level >= LEVEL_COND then ["(", arr, ")"] else arr
 
   unfoldSoak: ->
     @soak and this
