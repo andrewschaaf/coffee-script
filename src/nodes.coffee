@@ -38,17 +38,21 @@ exports.Base = class Base
   compile: (o, lvl) ->
     if @compile_bar?
       strings = []
-      processBarArray o, strings, @compile_bar(o, lvl)
+      @bar = @compile_bar(o, lvl)
+      processBarArray o, strings, @bar
       strings.join ''
     else
       o        = extend {}, o
       o.level  = lvl if lvl
       node     = @unfoldSoak(o) or this
       node.tab = o.indent
-      if o.level is LEVEL_TOP or not node.isStatement(o)
+      code = if o.level is LEVEL_TOP or not node.isStatement(o)
         node.compileNode o
       else
         node.compileClosure o
+      if not @bar?
+        @bar = [code]
+      code
 
   compileNode: (o, lvl) ->
     if @compileNode_bar?
@@ -214,7 +218,9 @@ exports.Expressions = class Expressions extends Base
 
   # An **Expressions** is the only node that can serve as the root.
   compile: (o = {}, level) ->
-    if o.scope then super o, level else @compileRoot o
+    code = if o.scope then super o, level else @compileRoot o
+    @bar = [code] if not @bar?
+    code
 
   # Compile all expressions within the **Expressions** body. If we need to
   # return the result, and it's an expression, simply return it. If it's a
@@ -323,13 +329,12 @@ exports.Return = class Return extends Base
 
   compile: (o, level) ->
     expr = @expression?.makeReturn()
-    if expr and expr not instanceof Return then expr.compile o, level else super o, level
+    code = if expr and expr not instanceof Return then expr.compile o, level else super o, level
+    @bar = [code] if not @bar?
+    code
 
-  compileNode_bar: (o) ->
-    if @expression
-      ["#{@tab}return ", PAREN(@expression), ";"]
-    else
-      ["#{@tab}return;"]
+  compileNode: (o) ->
+    @tab + "return#{ if @expression then ' ' + @expression.compile(o, LEVEL_PAREN) else '' };"
 
 #### Value
 
@@ -565,7 +570,9 @@ exports.Extends = class Extends extends Base
   # Hooks one constructor into another's prototype chain.
   compile: (o) ->
     utility 'hasProp'
-    new Call(new Value(new Literal utility 'extends'), [@child, @parent]).compile o
+    code = new Call(new Value(new Literal utility 'extends'), [@child, @parent]).compile o
+    @bar = [code] if not @bar?
+    code
 
 #### Access
 
@@ -593,8 +600,8 @@ exports.Index = class Index extends Base
 
   children: ['index']
 
-  compile_bar: (o) ->
-    [(if @proto then '.prototype' else '') + "[", PAREN(@index), "]"]
+  compile: (o) ->
+    (if @proto then '.prototype' else '') + "[#{ @index.compile o, LEVEL_PAREN }]"
 
   isComplex: ->
     @index.isComplex()
@@ -1081,7 +1088,9 @@ exports.Param = class Param extends Base
   children: ['name', 'value']
 
   compile: (o) ->
-    @name.compile o, LEVEL_LIST
+    code = @name.compile o, LEVEL_LIST
+    @bar = [code] if not @bar?
+    code
 
   asReference: (o) ->
     return @reference if @reference
@@ -1115,7 +1124,9 @@ exports.Splat = class Splat extends Base
     @name.assigns name
 
   compile: (o) ->
-    if @index? then @compileParam o else @name.compile o
+    code = if @index? then @compileParam o else @name.compile o
+    @bar = [code] if not @bar?
+    code
 
   # Utility function that converts arbitrary number of elements, mixed with
   # splats, to a proper array.
@@ -1419,15 +1430,15 @@ exports.Parens = class Parens extends Base
   isComplex : -> @body.isComplex()
   makeReturn: -> @body.makeReturn()
 
-  compileNode_bar: (o) ->
+  compileNode: (o) ->
     expr = @body.unwrap()
     if expr instanceof Value and expr.isAtomic()
       expr.front = @front
-      return [expr]
-    arr = [PAREN(expr)]
+      return expr.compile o
+    code = expr.compile o, LEVEL_PAREN
     bare = o.level < LEVEL_OP and (expr instanceof Op or expr instanceof Call or
       (expr instanceof For and expr.returns))
-    if bare then arr else ['(', arr, ')']
+    if bare then code else "(#{code})"
 
 #### For
 
@@ -1758,9 +1769,15 @@ processBarArray = (o, strings, arr) ->
     else if (typeof x) == 'string'
       strings.push x
     else if x instanceof Base
-      strings.push x.compile o
+      if x.bar
+        processBarArray o, strings, x.bar
+      else
+        strings.push x.compile o
     else if x.level?
-      strings.push x.node.compile o, x.level
+      if x.node.bar
+        processBarArray o, strings, x.node.bar
+      else
+        strings.push x.node.compile o, x.level
     else
       throw new Error "Invalid BAR element: #{x}"
 
