@@ -586,9 +586,12 @@ exports.Access = class Access extends Base
 
   children: ['name']
 
-  compile: (o) ->
+  compile_bar: (o) ->
     name = @name.compile o
-    @proto + if IS_STRING.test name then "[#{name}]" else ".#{name}"
+    if IS_STRING.test name
+      ["#{@proto}[", @name, "]"]
+    else
+      ["#{@proto}.", @name]
 
   isComplex: NO
 
